@@ -80,8 +80,8 @@ __CONFIG(WRT_ALL & VCOREV_OFF & PLLEN_ON & STVREN_ON &
 
 #define SET_BAUD(B) (((_XTAL_FREQ/B)/64) - 1)
 #define INA226_TRANS_START(RP, RW, REG )\
-{i2c.rw = RW; i2c.regptr = RP; i2c.reg = REG; i2c.busy = TRUE;}
-#define INA226_TRANS_BUSY (i2c.busy != 0)
+{i2c.rw = RW; i2c.regptr = RP; i2c.reg = REG; i2c.busy = TRUE; SSP1CON2bits.SEN = TRUE;}
+#define INA226_TRANS_BUSY (i2c.busy)
 #define INA226_TRANS_WAIT(RP, RW, REG) {INA226_TRANS_START(RP, RW, REG);\
 while(INA226_TRANS_BUSY) CLRWDT();}
 #define INA226_RESULT i2c.reg
@@ -297,6 +297,7 @@ static void handle_i2c(void)
             case I2C_SEND_REG:
                 SSP1BUF = i2c.regptr;
                 i2c.priv.state = I2C_READ_WRITE;
+                break;
 
             case I2C_READ_WRITE:
                 if(!i2c.rw){ /* Write? */
@@ -394,7 +395,7 @@ interrupt void isr(void)
 
 
     /* UART Transmit */
-    if(PIR1bits.TXIF){
+    if(PIE1bits.TXIE && PIR1bits.TXIF){
         PIR1bits.TXIF = 0;
         handle_tbe();
     }
@@ -820,11 +821,13 @@ int main(void) {
     APFCON1 = 0x00;
 
     /* Port A */
+    ANSELA = 0x00;
     TRISA = 0x07;
     WPUA = 0x07;
     PORTA = 0x00;
 
     /* Port C */
+    ANSELC = 0x00;
     TRISC = 0x23;
     WPUC = 0x00;
     PORTC = 0x00;
@@ -835,9 +838,13 @@ int main(void) {
     TXSTA = 0x20;
 
     /* I2C */
-    SSP1CON = 0x48;
+    SSP1CON1 = 0x8;
+    SSP1CON3 = 0x00;
     SSPADD = 0x4F;
     SSPSTAT = 0x80;
+    PIR1bits.SSP1IF = FALSE;
+    SSP1CON1bits.SSPEN = TRUE;
+
 
     /* Timer 0 */
     OPTION_REG = 0x04; /* 976.5625 Hz 1.024 mSec */
@@ -856,18 +863,14 @@ int main(void) {
     }
 
     /* Interrupt enables */
-    PIE1 = 0x00;
-    PIE2 = 0x00;
-    PIE3 = 0x00;
-    INTCON = 0xA0;
+    PIE1bits.SSP1IE = TRUE;
+    INTCON = 0xE0;
 
- 
 
-    if(PIE1bits.SSP1IE){
-        /* Set up INA226 */
-        INA226_TRANS_WAIT(INA226_CONFIG, 0, 0x4127);
-        INA226_TRANS_WAIT(INA226_CAL, 0, eedata.cal);
-    }
+    /* Set up INA226 */
+    INA226_TRANS_WAIT(INA226_CONFIG, 0, 0x4127);
+    INA226_TRANS_WAIT(INA226_CAL, 0, eedata.cal);
+  
 
     // Set at boot interrupt
     //raise_irq(IRQ_REASON_ATBOOT);
