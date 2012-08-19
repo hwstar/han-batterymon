@@ -305,7 +305,7 @@ static void handle_i2c(void)
                     i2c.priv.state = I2C_WRITE_LOW;
                 }
                 else{
-                    SSPCON2bits.RSEN = 1; /* Read, send restart */
+                    SSP1CON2bits.RSEN = 1; /* Read, send restart */
                     i2c.priv.state = I2C_READ_ADDR; /* Send address again */
                 }
                 break;
@@ -321,25 +321,32 @@ static void handle_i2c(void)
                 break;
 
             case I2C_READ_START:
-                SSPCON2bits.RCEN = 1; /* Restart complete, set receive enable*/
+                SSP1CON2bits.RCEN = 1; /* Set receive enable*/
                 i2c.priv.state = I2C_READ_HIGH;
                 break;
                 
             case I2C_READ_HIGH:
                 i2c.reghi = SSP1BUF;
+                SSP1CON2bits.ACKDT = FALSE;
+                SSP1CON2bits.ACKEN = TRUE;
                 i2c.priv.state = I2C_READ_HIGH_ACK;
                 break;
 
             case I2C_READ_HIGH_ACK:
-                SSPCON2bits.RCEN = 1; /* Set receive enable */
+                SSP1CON2bits.RCEN = 1; /* Set receive enable */
                 i2c.priv.state = I2C_READ_LOW;
                 break;
 
             case I2C_READ_LOW:
                 i2c.reglow = SSP1BUF;
                 i2c.reg = (i2c.reghi << 8) + i2c.reglow;
+                SSP1CON2bits.ACKDT = FALSE;
+                SSP1CON2bits.ACKEN = TRUE;
                 i2c.priv.state = I2C_STOP;
                 break;
+
+
+
 
             case I2C_STOP:
                 SSPCON2bits.PEN = 1; /* Send stop */
@@ -870,7 +877,7 @@ int main(void) {
     /* Set up INA226 */
     INA226_TRANS_WAIT(INA226_CONFIG, 0, 0x4127);
     INA226_TRANS_WAIT(INA226_CAL, 0, eedata.cal);
-  
+
 
     // Set at boot interrupt
     //raise_irq(IRQ_REASON_ATBOOT);
