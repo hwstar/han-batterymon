@@ -86,6 +86,8 @@ __CONFIG(WRT_ALL & VCOREV_OFF & PLLEN_ON & STVREN_ON &
 while(INA226_TRANS_BUSY) CLRWDT();}
 #define INA226_RESULT i2c.reg
 
+#define ADDRPROGMODE (ADDRPROG) // Jumper removed
+
 /*
  * Derived types
  */
@@ -174,9 +176,11 @@ static void handle_rda()
 	switch(rxi.state){
 
 		case	RXI_INIT:
-			rxi.packettimer = 0xFF;
-			rxi.state = RXI_ASSEM;
-			rxi.index = 0;
+                        if(STX == rxi.c){
+                            rxi.packettimer = 0xFF;
+                            rxi.state = RXI_ASSEM;
+                            rxi.index = 0;
+                        }
 			break;
 
 		case	RXI_ASSEM:
@@ -237,12 +241,12 @@ static void handle_tbe()
             case TXI_FIN:
                     TXREG = ETX; // Send End of TX
                     txi.state = TXI_INIT;
-                    PIE1bits.TXIE = 0; // Shut off TX interrupt
+                    PIE1bits.TXIE = FALSE; // Shut off TX interrupt
                     txi.txbusy = FALSE;
                     break;
 
             default:
-                    PIE1bits.TXIE = 0; // Shut off TX interrupt
+                    PIE1bits.TXIE = FALSE; // Shut off TX interrupt
                     txi.state = TXI_INIT;
                     break;
     }
@@ -305,7 +309,7 @@ static void handle_i2c(void)
                     i2c.priv.state = I2C_WRITE_LOW;
                 }
                 else{
-                    SSP1CON2bits.RSEN = 1; /* Read, send restart */
+                    SSP1CON2bits.RSEN = TRUE; /* Read, send restart */
                     i2c.priv.state = I2C_READ_ADDR; /* Send address again */
                 }
                 break;
@@ -321,7 +325,7 @@ static void handle_i2c(void)
                 break;
 
             case I2C_READ_START:
-                SSP1CON2bits.RCEN = 1; /* Set receive enable*/
+                SSP1CON2bits.RCEN = TRUE; /* Set receive enable*/
                 i2c.priv.state = I2C_READ_HIGH;
                 break;
                 
@@ -333,7 +337,7 @@ static void handle_i2c(void)
                 break;
 
             case I2C_READ_HIGH_ACK:
-                SSP1CON2bits.RCEN = 1; /* Set receive enable */
+                SSP1CON2bits.RCEN = TRUE; /* Set receive enable */
                 i2c.priv.state = I2C_READ_LOW;
                 break;
 
@@ -354,7 +358,7 @@ static void handle_i2c(void)
                 break;
 
             case I2C_DONE:
-                i2c.busy = 0;
+                i2c.busy = FALSE;
                 i2c.priv.state = I2C_SEND_ADDR;
                 break;
 
@@ -375,27 +379,20 @@ interrupt void isr(void)
 
     /* UART Receive */
     if(PIR1bits.RCIF){
-        PIR1bits.RCIF = 0;
-        if((RCSTAbits.OERR) || (RCSTAbits.FERR)){
-            RCSTAbits.SPEN = 0; /* Clear overrun or framing errors */
-            RCSTAbits.SPEN = 1;
-        }
-        else{
             handle_rda();
-
-        }
+            PIR1bits.RCIF = FALSE;
     }
 
     /* Timer */
     if(INTCONbits.T0IF){
-        INTCONbits.T0IF = 0;
+        INTCONbits.T0IF = FALSE;
         handle_timer0();
 
     }
    
     /* I2C */
     if(PIR1bits.SSP1IF){
-        PIR1bits.SSP1IF = 0;
+        PIR1bits.SSP1IF = FALSE;
         handle_i2c();
    
     }
@@ -403,7 +400,7 @@ interrupt void isr(void)
 
     /* UART Transmit */
     if(PIE1bits.TXIE && PIR1bits.TXIF){
-        PIR1bits.TXIF = 0;
+        PIR1bits.TXIF = FALSE;
         handle_tbe();
     }
 
@@ -475,8 +472,8 @@ uint16_t calc_crc16(uint16_t crcin, uint8_t *buf, uint8_t len)
 
 static bit txisempty()
 {
-    if(PIR1 & TXIF){
-            if(TXSTA & TRMT)
+    if(PIR1bits.TXIF){
+            if(TXSTAbits.TRMT)
                     return TRUE;
     }
     return FALSE;
@@ -495,10 +492,10 @@ static bit do_gnid(uint8_t len, volatile uint8_t *params)
             params[1] = (uint8_t) (MODULEID >> 8);
             params[2] = (uint8_t) VERSION;
             params[3] = (uint8_t) (VERSION >> 8);
-            return PASS;
+            return FALSE;
     }
     else
-            return FAIL;
+            return TRUE;
 }
 
 /*
@@ -513,10 +510,10 @@ bit do_gcst(uint8_t len, volatile uint8_t *params)
 		params[2] = phd.packettimeouts;
 		if(params[0])
 			phd.crcerrs = phd.packettimeouts = 0;
-		return PASS;
+		return FALSE;
 	}
 	else
-		return FAIL;
+		return TRUE;
 }
 
 /*
@@ -529,7 +526,7 @@ bit do_gipl(uint8_t len, volatile uint8_t *params)
 	params[0] = irq.reason;
 	irq.reason = IRQ_REASON_NONE;
 	irq.flag = 0;
-	return PASS;
+	return FALSE;
 }
 
 
@@ -609,7 +606,7 @@ void service_packets(void)
 				phd.state = PHD_PKT_READY;
 			}
 			else if((irq.flag) && (0 == irq.timer) &&
-                        (0 == ADDRPROG)){
+                        (!ADDRPROGMODE)){
                             /* This block sends an interrupt request */
                             uint8_t holdoff = irq.holdoff;
                             /* Provide a pseudo random delay time. */
@@ -664,14 +661,14 @@ void service_packets(void)
 
 		case	PHD_PKT_DECODE:
 
-			if(0 == ADDRPROG){ // When jumper inserted
+			if(!ADDRPROGMODE){
                             /* If not our address or broadcast address */
                             if((pkt.addr != myaddress) && (pkt.addr != 0xFF)){ 
 				phd.state = PHD_FIN;
 				break; // Not for us
                             }
 			}
-			else{ // Jumper removed: Address programmming mode
+			else{
                             if(PADD == pkt.cmd){ // Program address
 				myaddress = pkt.addr;
 				eeprom_write(EEADDR, myaddress);
@@ -682,7 +679,7 @@ void service_packets(void)
                             }
 			}
 
-			if(0 == ADDRPROG){ // If jumper inserted
+			if(!ADDRPROGMODE){
                             /* Compute parameter length */
                             len = rxi.index - ((phd.crcword) ?
                             (PKTCTRL + 2) : (PKTCTRL + 1)); 
@@ -720,18 +717,17 @@ void service_packets(void)
                                         phd.rxerr = TRUE;
 				}
                             }
-                            else{ // Must be a broadcast packet
+                           else{ // Must be a broadcast packet
                                 switch(pkt.cmd){
-                                    case BCP_ENUM: // Enumerate
+                                   case BCP_ENUM: // Enumerate
                                         raise_irq(IRQ_REASON_NONE);
                                         break;
 
                                         default:
                                             break;
-				}
-				phd.state = PHD_FIN;
-				break; // Broadcast packets are not Ack'ed.
-
+                                }
+                                phd.state = PHD_FIN;
+                                break; // Broadcast packets are not Ack'ed
                             }
 			}
 			phd.state = PHD_PKT_RESP;
@@ -751,7 +747,7 @@ void service_packets(void)
 
 		case PHD_TX_START:
 
-                    TXENA = 1;	// Enable TX
+                    TXENA = TRUE;	// Enable TX
 
                     //calculate return CRC
 
@@ -769,7 +765,7 @@ void service_packets(void)
                     // Send the response
                     phd.state = PHD_WAIT_TX;
                     txi.txbusy = TRUE;
-                    PIE1bits.TXIE = 1; // Enable TX interrupt
+                    PIE1bits.TXIE = TRUE; // Enable TX interrupt
                     break;
 
 		case PHD_WAIT_TX:
@@ -780,7 +776,7 @@ void service_packets(void)
 
 		case PHD_WAIT_EMPTY:
                     if(txisempty()){
-                        TXENA = 0;	// Disable TX
+                        TXENA = FALSE;	// Disable TX
                         phd.state = PHD_FIN;
                         ledactivitytimer = 0xFF;
                     }
@@ -822,6 +818,7 @@ int main(void) {
     /*
      * Init
      */
+    OSCCON = 0x70; // Select 8MHz source for PLL
 
     /* Pin selects */
     APFCON0 = 0x00;
@@ -840,7 +837,7 @@ int main(void) {
     PORTC = 0x00;
     
     /* UART */
-    SET_BAUD(9600);
+    SPBRGL = SET_BAUD(9600);
     RCSTA = 0x90;
     TXSTA = 0x20;
 
@@ -871,6 +868,7 @@ int main(void) {
 
     /* Interrupt enables */
     PIE1bits.SSP1IE = TRUE;
+    PIE1bits.RCIE = TRUE;
     INTCON = 0xE0;
 
 
@@ -891,6 +889,7 @@ int main(void) {
     while (1) {
         CLRWDT();
         service_packets();
+
     }
     return 0;
 }
