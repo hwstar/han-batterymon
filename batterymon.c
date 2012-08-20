@@ -86,7 +86,7 @@ __CONFIG(WRT_ALL & VCOREV_OFF & PLLEN_ON & STVREN_ON &
 while(INA226_TRANS_BUSY) CLRWDT();}
 #define INA226_RESULT i2c.reg
 
-#define ADDRPROGMODE (ADDRPROG) // Jumper removed
+#define ADDRPROGMODE (ADDRPROG == 1) // Jumper removed
 
 /*
  * Derived types
@@ -878,9 +878,9 @@ int main(void) {
 
 
     // Set at boot interrupt
-    //raise_irq(IRQ_REASON_ATBOOT);
+    raise_irq(IRQ_REASON_ATBOOT);
 
-   ledactivitytimer = 0x3F; // Short flash to indicate start up
+    ledactivitytimer = 0x3F; // Short flash to indicate start up
    
     /*
      * Foreground loop
