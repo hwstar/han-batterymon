@@ -51,12 +51,24 @@ __CONFIG(WRT_ALL & VCOREV_OFF & PLLEN_ON & STVREN_ON &
 #define FALSE 0
 #define PASS 1
 #define FAIL 0
+#define NOERR 0
+#define ERR 1
+
+
+
+/* Oscillator frequency */
+#define _XTAL_FREQ 32000000
+
+/* HAN Module ID and firmware version */
+#define MODULEID 0x2000     // MODULE ID
+#define VERSION  0x0000     // VERSION
+
 
 /* EEPROM */
 #define EECONFIGSTART   0x00
 #define EESIG           0x55AA
-#define EEDEFCAL        0xA00
-
+#define DEF_SHUNT_AMPS  200
+#define DEF_SHUNT_MV    50
 
 /* INA226 I2C address */
 #define INI226_ADDR 0x80
@@ -69,21 +81,27 @@ __CONFIG(WRT_ALL & VCOREV_OFF & PLLEN_ON & STVREN_ON &
 #define INA226_CURRENT  0x04
 #define INA226_CAL      0x05
 
-/* Oscillator frequency */
-#define _XTAL_FREQ 32000000
+/* INA226 Initial Constants */
+#define INA226_INIT_CONFIG 0x0927
 
-/* HAN Module ID and firmware version */
-#define MODULEID 0x2000     // MODULE ID
-#define VERSION  0x0000     // VERSION
+/* Misc constants */
+#define VOLTRES 1250       // Microvolt per bit
+#define VMAG -6
+#define CMAG -7
+#define PMAG -3
 
 /* Macros */
 
 #define SET_BAUD(B) (((_XTAL_FREQ/B)/64) - 1)
+
 #define INA226_TRANS_START(RP, RW, REG )\
 {i2c.rw = RW; i2c.regptr = RP; i2c.reg = REG; i2c.busy = TRUE; SSP1CON2bits.SEN = TRUE;}
+
 #define INA226_TRANS_BUSY (i2c.busy)
+
 #define INA226_TRANS_WAIT(RP, RW, REG) {INA226_TRANS_START(RP, RW, REG);\
 while(INA226_TRANS_BUSY) CLRWDT();}
+
 #define INA226_RESULT i2c.reg
 
 #define ADDRPROGMODE (ADDRPROG == 1) // Jumper removed
@@ -121,7 +139,11 @@ typedef struct {
 typedef union {
     struct {
         uint16_t sig;
-        uint16_t cal;
+        uint8_t  shunt_mv;
+        uint8_t pad1;
+        uint16_t shunt_amps;
+
+
     };
     uint8_t bytes[16];
 } eedata_t;
@@ -137,6 +159,9 @@ static bit enterbootloader = FALSE;
 static volatile uint8_t ledactivitytimer = 0;
 static uint8_t crcreg = 0;
 static uint8_t myaddress = 0;
+static uint16_t ina226_cal;                     // INA226 calibration constant
+static uint32_t current_lsb;                    // current lsb in 10exp-7 amps
+static uint32_t power_lsb;                      // power lsb (25x Current lsb)
 
 static volatile rxi_t   rxi;                    // Rcv interrupt handler vars
 static volatile pkt_t	pkt;			// Packet
@@ -407,6 +432,43 @@ interrupt void isr(void)
 }
 
 
+/*
+ * Copy a block from EEPROM to RAM
+ */
+
+static void eeprom_to_ram(void *ram, uint8_t eeaddr, uint8_t size)
+{
+    int i;
+    for(i = 0 ; i < size ; i++)
+        ((uint8_t *)ram)[i] = eeprom_read(eeaddr + i);
+
+
+}
+
+/*
+ * copy a block from RAM to EEPROM
+ */
+
+static void ram_to_eeprom(uint8_t eeaddr, void *ram, uint8_t size)
+{
+    int i;
+    for(i = 0 ; i < size ; i++)
+        eeprom_write(eeaddr + i, ((uint8_t *) ram)[i]);
+}
+
+
+static void calc_ina226_cal(void)
+{
+    uint32_t a107, rs107;
+
+    a107 = 10000000 * eedata.shunt_amps;
+    rs107 = (eedata.shunt_mv*(10000000/1000))/eedata.shunt_amps;
+
+    current_lsb = a107 >> 15;
+    power_lsb = 25 * current_lsb;
+    ina226_cal = (uint16_t) ((512000000)/((current_lsb * rs107 )/1000));
+    return;
+}
 
 /*
 * Calculate 8 bit CRC
@@ -492,10 +554,10 @@ static bit do_gnid(uint8_t len, volatile uint8_t *params)
             params[1] = (uint8_t) (MODULEID >> 8);
             params[2] = (uint8_t) VERSION;
             params[3] = (uint8_t) (VERSION >> 8);
-            return FALSE;
+            return NOERR;
     }
     else
-            return TRUE;
+            return ERR;
 }
 
 /*
@@ -510,10 +572,10 @@ bit do_gcst(uint8_t len, volatile uint8_t *params)
 		params[2] = phd.packettimeouts;
 		if(params[0])
 			phd.crcerrs = phd.packettimeouts = 0;
-		return FALSE;
+		return NOERR;
 	}
 	else
-		return TRUE;
+		return ERR;
 }
 
 /*
@@ -526,9 +588,112 @@ bit do_gipl(uint8_t len, volatile uint8_t *params)
 	params[0] = irq.reason;
 	irq.reason = IRQ_REASON_NONE;
 	irq.flag = 0;
-	return FALSE;
+	return NOERR;
 }
 
+/*
+ * Return voltage
+ */
+
+bit do_volts(uint8_t len, volatile uint8_t *params)
+{
+    uint16_t x;
+    uint32_t *p = (uint32_t *) (params + 4);
+
+    if((8 == len) && (!params[0])){
+        INA226_TRANS_WAIT(INA226_BUS, 1, 0);
+        x = INA226_RESULT;
+        params[1] = VMAG; // Magnitude
+        params[2] = (uint8_t) x;
+        params[3] = (uint8_t)(x >> 8);
+        *p = VOLTRES;
+        return NOERR;
+    }
+    return ERR;
+
+}
+
+/*
+ * Return current
+ */
+
+bit do_current(uint8_t len, volatile uint8_t *params)
+{
+    uint16_t x;
+    uint32_t *p = (uint32_t *) (params + 4);
+
+    if((8 == len) && (!params[0])){
+        INA226_TRANS_WAIT(INA226_CURRENT, 1, 0);
+        x = INA226_RESULT;
+        params[1] = CMAG; // Magnitude
+        params[2] = (uint8_t) x;
+        params[3] = (uint8_t)(x >> 8);
+        *p = current_lsb;
+        return NOERR;
+
+    }
+    return ERR;
+
+}
+
+
+/*
+ * Return power
+ */
+
+bit do_power(uint8_t len, volatile uint8_t *params)
+{
+    uint16_t x;
+    uint32_t *p = (uint32_t *) (params + 4);
+
+    if((8 == len) && (!params[0])){
+        INA226_TRANS_WAIT(INA226_POWER, 1, 0);
+        x = INA226_RESULT;
+        params[1] = PMAG; // Magnitude
+        params[2] = (uint8_t) x;
+        params[3] = (uint8_t)(x >> 8);
+        *p = power_lsb;
+        return NOERR;
+
+    }
+    return ERR;
+
+}
+
+/*
+ * Allow user to read and write the shunt config
+ */
+
+bit do_shunt_config(uint8_t len, volatile uint8_t *params)
+{
+    uint16_t *words = (uint16_t *) params;
+
+    if(4 == len){
+        if( 0 == params[0]){ /* Read config? */
+            words[1] = eedata.shunt_amps;
+            params[1] = eedata.shunt_mv;
+            return NOERR;
+        }
+        else if(1 == params[0]){ /* Write config? */
+            // sanity check values
+            if((words[1] <= 200) && (words[1] > 0) &&
+               (params[1] <= 80 && (params[1] > 0))){
+                eedata.shunt_amps = words[1];
+                eedata.shunt_mv = params[1];
+                calc_ina226_cal(); // calculate new cal value
+                INA226_TRANS_WAIT(INA226_CAL, 0, ina226_cal); // update cal
+                ram_to_eeprom(0, &eedata, sizeof(eedata)); // eeprom write
+                return NOERR;
+            }
+        }
+        else if (2 == params[0]){ /* Return cal for diagnostic purposes */
+            params[1] = 0;
+            words[0] = ina226_cal; // send cal back with return data
+            return NOERR;
+        }
+    }
+    return ERR;
+}
 
 
 /*
@@ -561,31 +726,6 @@ static bool do_enterbootloader(uint8_t len, uint8_t *params)
 }
 
 #endif
-
-/*
- * Copy a block from EEPROM to RAM
- */
-
-static void eeprom_to_ram(void *ram, uint8_t eeaddr, uint8_t size)
-{
-    int i;
-    for(i = 0 ; i < size ; i++)
-        ((uint8_t *)ram)[i] = eeprom_read(eeaddr + i);
-
-
-}
-
-/*
- * copy a block from RAM to EEPROM
- */
-
-static void ram_to_eeprom(uint8_t eeaddr, void *ram, uint8_t size)
-{
-    int i;
-    for(i = 0 ; i < size ; i++)
-        eeprom_write(eeaddr + i, ((uint8_t *) ram)[i]);
-}
-
 
 /*
 * State machine to service packets
@@ -704,6 +844,22 @@ void service_packets(void)
 
                                     case GIPL: // Poll Interrupt reason
                                         phd.rxerr =  do_gipl(len, pkt.params);
+                                        break;
+
+                                    case GVLT: // Return voltage
+                                        phd.rxerr = do_volts(len, pkt.params);
+                                        break;
+
+                                    case GCUR: // Return current
+                                        phd.rxerr = do_current(len, pkt.params);
+                                        break;
+
+                                    case GPWR: // Return power
+                                        phd.rxerr = do_power(len, pkt.params);
+                                        break;
+
+                                    case GSCF:
+                                        phd.rxerr = do_shunt_config(len, pkt.params);
                                         break;
 
                                     #ifdef BOOTAPP
@@ -859,10 +1015,11 @@ int main(void) {
     /* Fetch config */
     eeprom_to_ram(&eedata, EECONFIGSTART, sizeof(eedata_t));
     if(eedata.sig != EESIG){
-        for(i = 4; i < sizeof(eedata_t); i++)
+        for(i = 2; i < sizeof(eedata_t); i++)
             eedata.bytes[i] = 0;
         eedata.sig = EESIG;
-        eedata.cal = EEDEFCAL;
+        eedata.shunt_amps = DEF_SHUNT_AMPS;
+        eedata.shunt_mv = DEF_SHUNT_MV;
         ram_to_eeprom(EECONFIGSTART, &eedata, sizeof(eedata_t));
     }
 
@@ -871,10 +1028,15 @@ int main(void) {
     PIE1bits.RCIE = TRUE;
     INTCON = 0xE0;
 
-
+    /* Calculate INA226 calibration constant */
+    calc_ina226_cal();
+    
     /* Set up INA226 */
-    INA226_TRANS_WAIT(INA226_CONFIG, 0, 0x4127);
-    INA226_TRANS_WAIT(INA226_CAL, 0, eedata.cal);
+    INA226_TRANS_WAIT(INA226_CONFIG, 0, INA226_INIT_CONFIG);
+    INA226_TRANS_WAIT(INA226_CAL, 0, ina226_cal);
+ 
+
+
 
 
     // Set at boot interrupt
