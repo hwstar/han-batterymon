@@ -41,14 +41,16 @@ __CONFIG(WRT_ALL & VCOREV_OFF & PLLEN_ON & STVREN_ON &
 
 #define ADDRPROG    PORTAbits.RA0
 #define ALERT       PORTAbits.RA2
-#define OD1         PORTAbits.RA4
-#define OD2         PORTAbits.RA5
-#define TXENA       PORTCbits.RC3
-#define LED         PORTCbits.RC2
+#define OD1         LATAbits.LATA4
+#define OD2         LATAbits.LATA5
+#define TXENA       LATCbits.LATC3
+#define LED         LATCbits.LATC2
 
 /* MISC Constants */
 #define TRUE 1
 #define FALSE 0
+#define OFF 0
+#define ON 1
 #define PASS 1
 #define FAIL 0
 #define NOERR 0
@@ -60,7 +62,7 @@ __CONFIG(WRT_ALL & VCOREV_OFF & PLLEN_ON & STVREN_ON &
 #define _XTAL_FREQ 32000000
 
 /* HAN Module ID and firmware version */
-#define MODULEID 0x2000     // MODULE ID
+#define MODULEID 0x1007     // MODULE ID
 #define VERSION  0x0000     // VERSION
 
 
@@ -105,6 +107,8 @@ while(INA226_TRANS_BUSY) CLRWDT();}
 #define INA226_RESULT i2c.reg
 
 #define ADDRPROGMODE (ADDRPROG == 1) // Jumper removed
+
+
 
 /*
  * Derived types
@@ -564,7 +568,7 @@ static bit do_gnid(uint8_t len, volatile uint8_t *params)
 * Return comm status
 */
 
-bit do_gcst(uint8_t len, volatile uint8_t *params)
+static bit do_gcst(uint8_t len, volatile uint8_t *params)
 {
 
 	if(3 == len){
@@ -582,7 +586,7 @@ bit do_gcst(uint8_t len, volatile uint8_t *params)
 * Poll for interrupt reason
 */
 
-bit do_gipl(uint8_t len, volatile uint8_t *params)
+static bit do_gipl(uint8_t len, volatile uint8_t *params)
 {
 
 	params[0] = irq.reason;
@@ -595,7 +599,7 @@ bit do_gipl(uint8_t len, volatile uint8_t *params)
  * Return voltage
  */
 
-bit do_volts(uint8_t len, volatile uint8_t *params)
+static bit do_volts(uint8_t len, volatile uint8_t *params)
 {
     uint16_t x;
     uint32_t *p = (uint32_t *) (params + 4);
@@ -617,7 +621,7 @@ bit do_volts(uint8_t len, volatile uint8_t *params)
  * Return current
  */
 
-bit do_current(uint8_t len, volatile uint8_t *params)
+static bit do_current(uint8_t len, volatile uint8_t *params)
 {
     uint16_t x;
     uint32_t *p = (uint32_t *) (params + 4);
@@ -641,7 +645,7 @@ bit do_current(uint8_t len, volatile uint8_t *params)
  * Return power
  */
 
-bit do_power(uint8_t len, volatile uint8_t *params)
+static bit do_power(uint8_t len, volatile uint8_t *params)
 {
     uint16_t x;
     uint32_t *p = (uint32_t *) (params + 4);
@@ -664,7 +668,7 @@ bit do_power(uint8_t len, volatile uint8_t *params)
  * Allow user to read and write the shunt config
  */
 
-bit do_shunt_config(uint8_t len, volatile uint8_t *params)
+static bit do_shunt_config(uint8_t len, volatile uint8_t *params)
 {
     uint16_t *words = (uint16_t *) params;
 
@@ -695,6 +699,62 @@ bit do_shunt_config(uint8_t len, volatile uint8_t *params)
     return ERR;
 }
 
+/*
+ * Set or read output bits
+ */
+
+
+static bit do_gout(uint8_t len, volatile uint8_t *params)
+{
+	uint8_t res;
+
+	if(len == 3){
+		if(params[0] > 1) // Channel
+			return ERR;
+		if(params[2] != 0) // Result
+			return ERR;
+		switch(params[1]){ // Command
+			case 0:
+                                switch(params[0]){
+                                    case 0:
+                                        OD1 = OFF;
+                                        break;
+                                    case 1:
+                                        OD2 = OFF;
+                                        break;
+                                }
+				break;
+
+			case 1:
+                                switch(params[0]){
+                                    case 0:
+                                        OD1 = ON;
+                                        break;
+                                    case 1:
+                                        OD2 = ON;
+                                        break;
+                                }
+				break;
+			case 2:
+				switch(params[0]){
+					case 0:
+						res = OD1;
+						break;
+					case 1:
+						res = OD2;
+						break;
+				}
+				params[2] = res;
+				break;
+			default:
+				return ERR;
+		}
+		return NOERR;
+	}
+	else
+		return ERR;
+
+}
 
 /*
 * Raise interrupt request
@@ -844,6 +904,10 @@ void service_packets(void)
 
                                     case GIPL: // Poll Interrupt reason
                                         phd.rxerr =  do_gipl(len, pkt.params);
+                                        break;
+
+                                    case GOUT:
+                                        phd.rxerr = do_gout(len, pkt.params);
                                         break;
 
                                     case GVLT: // Return voltage
