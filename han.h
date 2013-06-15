@@ -58,9 +58,9 @@ enum {PHD_START= 0, PHD_PKT_READY, PHD_PKT_DECODE, PHD_PKT_RESP, PHD_TX_START, P
 #define GOUT	0x13				// Control digital outputs(channel,command, state) command: 0, off 1 on, 2 return state
 #define GINP	0x14				// Read digital input (channel,state)
 #define	GACD	0x15				// Read AC voltage and frequency (voltlow, volthigh, freqlow, freqhigh)
-#define GVLT    0x16                            // Return voltage (volt low, volt high, magnitude, 1lsb low, 1lsb high)
-#define GCUR    0x17                            // Return current (current low, current high, magnitude, 1lsb low, 1lsb high)
-#define GPWR    0x18                            // Return power (power low, power high, magnitude, 1lsb low, 1lsb high)
+#define GVLT    0x16                            // Return voltage (channel, volt[2], magnitude, 1lsb[4])
+#define GCUR    0x17                            // Return current (channel, current[2], magnitude, 1lsb[4])
+#define GPWR    0x18                            // Return power (channel, power[2], magnitude, 1lsb[4])
 #define GSCF    0x19                            // Rwad/Write Shunt configuration
 #define GPCY	0x1F				// Return power cycle status (state) state: 0, power cycle, nz, power cycle
 
