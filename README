@@ -1,0 +1,9 @@
+xplx10 is a small program to allow a X10 CM11A transceiver to be bridged
+on to an xPL home automation backbone.
+
+It can be run as a daemon, or in the foreground. There are command line options
+to select the com port, house code, instance id, log file, debug level, and
+broadcast interface. For a complete list of command line options, type ./xplx10 --help once the program is built.
+
+To compile xplx10, compile and install xPLLib on your system first.
+

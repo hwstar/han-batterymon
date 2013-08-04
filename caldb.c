@@ -2,6 +2,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+/*
+ * Test bench to calculate INA226 calibration value
+ */
+
+
 main(int argc, char *argv[])
 {
 	uint32_t a107, rs107,power_lsb,current_lsb;
