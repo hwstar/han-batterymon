@@ -1,9 +1,3 @@
-xplx10 is a small program to allow a X10 CM11A transceiver to be bridged
-on to an xPL home automation backbone.
+This is firmware written in C for a PIC microcontroller. With the appropriate hardware it allows voltages and currents in a 12 volt battery backup system to be measured and transmitted over an RS-485 network using the HAN protocol.
 
-It can be run as a daemon, or in the foreground. There are command line options
-to select the com port, house code, instance id, log file, debug level, and
-broadcast interface. For a complete list of command line options, type ./xplx10 --help once the program is built.
-
-To compile xplx10, compile and install xPLLib on your system first.
-
+To compile the firmware, you will need the Microchip MPLABX IDE and the XC8 compiler. The hardware schematic, and Eagle CAD files can be obtained by email request. 
